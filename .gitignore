@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.npm
+package-lock.json
+
+# Hardhat
+artifacts/
+cache/
+typechain-types/
+coverage/
+coverage.json
+.solhintcache
+
+# Next.js
+.next/
+out/
+build/
+frontend/.next/
+
+# Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDEs and Tools
+.cursor/
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# TypeScript
+tsconfig.tsbuildinfo
+
