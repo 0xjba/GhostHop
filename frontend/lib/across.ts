@@ -1,7 +1,5 @@
 import { encodeAbiParameters } from 'viem';
-
-export const GHOSTHOP_ADAPTER_ADDRESS_SEPOLIA = "YOUR_DEPLOYED_ADAPTER_ADDRESS"; // TODO: Replace after deployment
-export const ACROSS_SPOKE_POOL_SEPOLIA = "0x5ef6C01E11889d86803e0B23e3cB3F9E9d97B662";
+import { ADDRESSES } from '../constants/addresses';
 
 export const encodeGhostHopMessage = (userL2Address: string) => {
   return encodeAbiParameters(
@@ -15,7 +13,7 @@ export interface AcrossQuoteParams {
   destinationChainId: number;
   inputToken: string;
   outputToken: string;
-  amount: string; // amount in base units (string)
+  amount: string;
 }
 
 export const getAcrossQuote = async (params: AcrossQuoteParams) => {
@@ -34,3 +32,17 @@ export const getAcrossQuote = async (params: AcrossQuoteParams) => {
   return response.json();
 };
 
+export const getAcrossSolanaDepositTx = async (params: any) => {
+  const response = await fetch('https://across.to/api/solana/deposit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Across Solana API Error: ${errorText}`);
+  }
+
+  return response.json();
+};
