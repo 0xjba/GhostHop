@@ -3,7 +3,7 @@
 import React, { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider, http } from 'wagmi';
-import { mainnet, sepolia, base, baseSepolia, arbitrum, arbitrumSepolia } from 'wagmi/chains';
+import { mainnet, sepolia, base, baseSepolia, arbitrum, arbitrumSepolia, optimismSepolia } from 'wagmi/chains';
 import { RainbowKitProvider, getDefaultConfig } from '@rainbow-me/rainbowkit';
 import '@rainbow-me/rainbowkit/styles.css';
 
@@ -18,7 +18,7 @@ const queryClient = new QueryClient();
 const config = getDefaultConfig({
   appName: 'GhostHop Bridge',
   projectId: 'YOUR_PROJECT_ID', // Replace with your WalletConnect Project ID
-  chains: [mainnet, sepolia, base, baseSepolia, arbitrum, arbitrumSepolia],
+  chains: [mainnet, sepolia, base, baseSepolia, arbitrum, arbitrumSepolia, optimismSepolia],
   transports: {
     [mainnet.id]: http(),
     [sepolia.id]: http(),
@@ -26,6 +26,7 @@ const config = getDefaultConfig({
     [baseSepolia.id]: http(),
     [arbitrum.id]: http(),
     [arbitrumSepolia.id]: http(),
+    [optimismSepolia.id]: http(),
   },
   ssr: true,
 });

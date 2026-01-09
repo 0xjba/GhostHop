@@ -1,6 +1,8 @@
 import { encodeAbiParameters } from 'viem';
 import { ADDRESSES } from '../constants/addresses';
 
+const ACROSS_API_URL = process.env.NEXT_PUBLIC_ACROSS_API_URL || 'https://testnet.across.to/api';
+
 export const encodeGhostHopMessage = (userL2Address: string) => {
   return encodeAbiParameters(
     [{ type: 'address' }],
@@ -17,10 +19,11 @@ export interface AcrossQuoteParams {
 }
 
 export const getAcrossQuote = async (params: AcrossQuoteParams) => {
-  const url = new URL('https://across.to/api/suggested-fees');
+  const url = new URL(`${ACROSS_API_URL}/suggested-fees`);
   url.searchParams.append('originChainId', params.originChainId.toString());
   url.searchParams.append('destinationChainId', params.destinationChainId.toString());
-  url.searchParams.append('token', params.inputToken);
+  url.searchParams.append('inputToken', params.inputToken);
+  url.searchParams.append('outputToken', params.outputToken);
   url.searchParams.append('amount', params.amount);
 
   const response = await fetch(url.toString());
@@ -33,7 +36,7 @@ export const getAcrossQuote = async (params: AcrossQuoteParams) => {
 };
 
 export const getAcrossSolanaDepositTx = async (params: any) => {
-  const response = await fetch('https://across.to/api/solana/deposit', {
+  const response = await fetch(`${ACROSS_API_URL}/solana/deposit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
