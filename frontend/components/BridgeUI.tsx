@@ -44,15 +44,25 @@ export default function BridgeUI() {
   const [error, setError] = useState<string | null>(null);
 
   // Derived Helpers
-  const isSolanaSource = sourceChainId === CHAIN_IDS.SOLANA_MAINNET;
+  const isSolanaSource = sourceChainId === CHAIN_IDS.SOLANA_DEVNET;
   
   // 2. LOGIC: Determine Input Token based on SELECTED State
   const getInputTokenAddress = () => {
-    if (isSolanaSource) return ADDRESSES.USDC.SOLANA_MAINNET;
-    if (token === 'ETH') return ADDRESSES.NATIVE_ETH;
+    if (isSolanaSource) return ADDRESSES.USDC.SOLANA_DEVNET;
+    
+    if (token === 'ETH') {
+      switch (sourceChainId) {
+        case CHAIN_IDS.BASE_SEPOLIA: return ADDRESSES.ETH.BASE_SEPOLIA;
+        case CHAIN_IDS.ARBITRUM_SEPOLIA: return ADDRESSES.ETH.ARBITRUM_SEPOLIA;
+        case CHAIN_IDS.OPTIMISM_SEPOLIA: return ADDRESSES.ETH.OPTIMISM_SEPOLIA;
+        default: return undefined;
+      }
+    }
     
     switch (sourceChainId) {
       case CHAIN_IDS.BASE_SEPOLIA: return ADDRESSES.USDC.BASE_SEPOLIA;
+      case CHAIN_IDS.ARBITRUM_SEPOLIA: return ADDRESSES.USDC.ARBITRUM_SEPOLIA;
+      case CHAIN_IDS.OPTIMISM_SEPOLIA: return ADDRESSES.USDC.OPTIMISM_SEPOLIA;
       default: return undefined;
     }
   };
@@ -75,27 +85,27 @@ export default function BridgeUI() {
     : (token === 'ETH' ? 18 : (fetchedDecimals ? Number(fetchedDecimals) : 18));
 
   // Pre-flight checks: Whitelist and Paused
-  const destTokenAddress = token === 'USDC' ? ADDRESSES.USDC.ETHEREUM_SEPOLIA : ADDRESSES.NATIVE_ETH;
+  const destTokenAddress = token === 'USDC' ? ADDRESSES.USDC.ETHEREUM_SEPOLIA : ADDRESSES.ETH.ETHEREUM_SEPOLIA;
   const roleToCheck = token === 'USDC' ? ERC20_TOKEN_ROLE : NATIVE_TOKEN_ROLE;
 
   const { data: isPaused } = useReadContract({
-    address: ADDRESSES.TEN_BRIDGE_L1_SEPOLIA,
+    address: ADDRESSES.TEN_BRIDGE_L1 as `0x${string}`,
     abi: TEN_BRIDGE_ABI,
     functionName: 'paused',
     chainId: CHAIN_IDS.ETHEREUM_SEPOLIA,
     query: {
-      enabled: !!ADDRESSES.TEN_BRIDGE_L1_SEPOLIA,
+      enabled: !!ADDRESSES.TEN_BRIDGE_L1,
     }
   });
 
   const { data: isWhitelisted } = useReadContract({
-    address: ADDRESSES.TEN_BRIDGE_L1_SEPOLIA,
+    address: ADDRESSES.TEN_BRIDGE_L1 as `0x${string}`,
     abi: TEN_BRIDGE_ABI,
     functionName: 'hasRole',
     args: [roleToCheck as `0x${string}`, destTokenAddress],
     chainId: CHAIN_IDS.ETHEREUM_SEPOLIA,
     query: {
-      enabled: !!ADDRESSES.TEN_BRIDGE_L1_SEPOLIA && !!destTokenAddress,
+      enabled: !!ADDRESSES.TEN_BRIDGE_L1 && !!destTokenAddress,
     }
   });
 
@@ -109,7 +119,7 @@ export default function BridgeUI() {
         originChainId: sourceChainId,
         destinationChainId: CHAIN_IDS.ETHEREUM_SEPOLIA,
         inputToken: inputTokenAddress,
-        outputToken: token === 'USDC' ? ADDRESSES.USDC.ETHEREUM_SEPOLIA : ADDRESSES.NATIVE_ETH,
+        outputToken: token === 'USDC' ? ADDRESSES.USDC.ETHEREUM_SEPOLIA : ADDRESSES.ETH.ETHEREUM_SEPOLIA,
         amount: parseUnits(amount, tokenDecimals).toString(),
       });
       setQuote(q);
@@ -160,15 +170,15 @@ export default function BridgeUI() {
     setLoading(true);
     try {
       const message = encodeGhostHopMessage(targetL2Address);
-      if (!ADDRESSES.GHOSTHOP_ADAPTER_SEPOLIA) throw new Error("GhostHop Adapter address not configured in .env");
+      if (!ADDRESSES.GHOSTHOP_ADAPTER) throw new Error("GhostHop Adapter address not configured in .env");
 
       const { transaction: serializedTx } = await getAcrossSolanaDepositTx({
-        originChainId: CHAIN_IDS.SOLANA_MAINNET,
+        originChainId: CHAIN_IDS.SOLANA_DEVNET,
         destinationChainId: CHAIN_IDS.ETHEREUM_SEPOLIA,
-        inputToken: ADDRESSES.USDC.SOLANA_MAINNET,
+        inputToken: ADDRESSES.USDC.SOLANA_DEVNET,
         outputToken: ADDRESSES.USDC.ETHEREUM_SEPOLIA,
         amount: quote.inputAmount,
-        recipient: ADDRESSES.GHOSTHOP_ADAPTER_SEPOLIA,
+        recipient: ADDRESSES.GHOSTHOP_ADAPTER,
         message: message,
         relayerFeePct: quote.relayerFeePct,
         quoteTimestamp: quote.quoteTimestamp,
@@ -194,17 +204,17 @@ export default function BridgeUI() {
     setLoading(true);
     try {
       const message = encodeGhostHopMessage(targetL2Address);
-      if (!ADDRESSES.GHOSTHOP_ADAPTER_SEPOLIA) throw new Error("GhostHop Adapter address not configured in .env");
+      if (!ADDRESSES.GHOSTHOP_ADAPTER) throw new Error("GhostHop Adapter address not configured in .env");
       
-      const isEth = quote.inputToken === ADDRESSES.NATIVE_ETH;
+      const isEth = token === 'ETH';
 
       const tx = await writeContractAsync({
-        address: ADDRESSES.ACROSS_SPOKE_POOL_SEPOLIA,
+        address: ADDRESSES.ACROSS_SPOKE_POOL as `0x${string}`,
         abi: ACROSS_SPOKE_POOL_ABI,
         functionName: 'depositV3',
         args: [
           evmAddress as `0x${string}`,
-          ADDRESSES.GHOSTHOP_ADAPTER_SEPOLIA as `0x${string}`,
+          ADDRESSES.GHOSTHOP_ADAPTER as `0x${string}`,
           quote.inputToken as `0x${string}`,
           quote.outputToken as `0x${string}`,
           BigInt(quote.inputAmount),
@@ -264,7 +274,7 @@ export default function BridgeUI() {
             className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value={CHAIN_IDS.BASE_SEPOLIA}>Base Sepolia</option>
-            <option value={CHAIN_IDS.SOLANA_MAINNET}>Solana Mainnet</option>
+            <option value={CHAIN_IDS.SOLANA_DEVNET}>Solana Devnet</option>
           </select>
         </div>
 
