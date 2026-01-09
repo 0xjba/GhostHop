@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useAccount, useWriteContract, useReadContract, useChainId } from 'wagmi';
+import { useAccount, useWriteContract, useReadContract, useChainId, useSwitchChain } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
@@ -27,11 +27,15 @@ interface AcrossQuote {
 }
 
 export default function BridgeUI() {
-  const { address: evmAddress } = useAccount();
+  const { address: evmAddress, isConnected: isEvmConnected } = useAccount();
   const { publicKey: solanaAddress, signTransaction, connected: isSolanaConnected } = useWallet();
   const { connection } = useConnection();
-  const chainId = useChainId();
+  const currentChainId = useChainId();
+  const { switchChain } = useSwitchChain();
 
+  // 1. STATE: Source Chain Selection (Default to Base Sepolia)
+  const [sourceChainId, setSourceChainId] = useState<number>(CHAIN_IDS.BASE_SEPOLIA);
+  
   const [amount, setAmount] = useState('');
   const [token, setToken] = useState<'USDC' | 'ETH'>('USDC');
   const [targetL2Address, setTargetL2Address] = useState('');
@@ -39,29 +43,36 @@ export default function BridgeUI() {
   const [quote, setQuote] = useState<AcrossQuote | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const isSolanaSource = isSolanaConnected && !!solanaAddress;
+  // Derived Helpers
+  const isSolanaSource = sourceChainId === CHAIN_IDS.SOLANA_MAINNET;
+  
+  // 2. LOGIC: Determine Input Token based on SELECTED State
+  const getInputTokenAddress = () => {
+    if (isSolanaSource) return ADDRESSES.USDC.SOLANA_MAINNET;
+    if (token === 'ETH') return ADDRESSES.NATIVE_ETH;
+    
+    switch (sourceChainId) {
+      case CHAIN_IDS.BASE_SEPOLIA: return ADDRESSES.USDC.BASE_SEPOLIA;
+      default: return undefined;
+    }
+  };
 
-  // Determine current input token address based on source and selection
-  const inputTokenAddress = isSolanaSource 
-    ? ADDRESSES.USDC.SOLANA_MAINNET 
-    : (token === 'USDC' 
-        ? (chainId === CHAIN_IDS.BASE_SEPOLIA ? ADDRESSES.USDC.BASE_SEPOLIA : ADDRESSES.USDC.ETHEREUM_SEPOLIA)
-        : ADDRESSES.NATIVE_ETH);
+  const inputTokenAddress = getInputTokenAddress();
 
-  // Dynamic Decimals Fetching (EVM only)
+  // Dynamic Decimals (Only fetch if EVM + Not ETH)
   const { data: fetchedDecimals } = useReadContract({
     address: inputTokenAddress as `0x${string}`,
     abi: ERC20_ABI,
     functionName: 'decimals',
-    chainId: chainId,
+    chainId: sourceChainId,
     query: {
-      enabled: !isSolanaSource && inputTokenAddress !== ADDRESSES.NATIVE_ETH && !!inputTokenAddress,
+      enabled: !isSolanaSource && token !== 'ETH' && !!inputTokenAddress,
     }
   });
 
   const tokenDecimals = isSolanaSource 
-    ? 6 // Solana USDC is always 6
-    : (inputTokenAddress === ADDRESSES.NATIVE_ETH ? 18 : (fetchedDecimals ? Number(fetchedDecimals) : 18));
+    ? 6 
+    : (token === 'ETH' ? 18 : (fetchedDecimals ? Number(fetchedDecimals) : 18));
 
   // Pre-flight checks: Whitelist and Paused
   const destTokenAddress = token === 'USDC' ? ADDRESSES.USDC.ETHEREUM_SEPOLIA : ADDRESSES.NATIVE_ETH;
@@ -88,20 +99,17 @@ export default function BridgeUI() {
     }
   });
 
+  // 3. QUOTE: Fetch based on Selection State
   const handleFetchQuote = async () => {
-    if (!amount || isNaN(Number(amount))) return;
+    if (!amount || isNaN(Number(amount)) || !inputTokenAddress) return;
     setLoading(true);
     setError(null);
     try {
-      const originChainId = isSolanaSource ? CHAIN_IDS.SOLANA_MAINNET : chainId;
-      const inputToken = inputTokenAddress;
-      const outputToken = token === 'USDC' ? ADDRESSES.USDC.ETHEREUM_SEPOLIA : ADDRESSES.NATIVE_ETH;
-
       const q = await getAcrossQuote({
-        originChainId,
+        originChainId: sourceChainId,
         destinationChainId: CHAIN_IDS.ETHEREUM_SEPOLIA,
-        inputToken,
-        outputToken,
+        inputToken: inputTokenAddress,
+        outputToken: token === 'USDC' ? ADDRESSES.USDC.ETHEREUM_SEPOLIA : ADDRESSES.NATIVE_ETH,
         amount: parseUnits(amount, tokenDecimals).toString(),
       });
       setQuote(q);
@@ -119,76 +127,119 @@ export default function BridgeUI() {
     }, 500);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [amount, chainId, isSolanaSource, token]);
+  }, [amount, sourceChainId, token]);
 
   const { writeContractAsync } = useWriteContract();
 
-  const handleBridge = async () => {
-    if (!quote || !targetL2Address) return;
-    setLoading(true);
+  // 4. EXECUTION: Handle Switch vs Bridge
+  const handleAction = async () => {
     setError(null);
 
+    if (isSolanaSource) {
+      if (!isSolanaConnected) return alert("Please connect your Solana Wallet");
+      handleBridgeSolana();
+      return;
+    }
+
+    if (!isEvmConnected) return; // Handled by ConnectButton
+    
+    if (currentChainId !== sourceChainId) {
+      try {
+        switchChain({ chainId: sourceChainId });
+      } catch (e) {
+        setError("Failed to switch network. Please switch manually.");
+      }
+      return;
+    }
+
+    handleBridgeEvm();
+  };
+
+  const handleBridgeSolana = async () => {
+    if (!quote || !targetL2Address || !signTransaction || !solanaAddress) return;
+    setLoading(true);
     try {
       const message = encodeGhostHopMessage(targetL2Address);
+      if (!ADDRESSES.GHOSTHOP_ADAPTER_SEPOLIA) throw new Error("GhostHop Adapter address not configured in .env");
 
-      if (isSolanaSource) {
-        if (!signTransaction || !solanaAddress) throw new Error("Solana wallet not connected");
-        if (!ADDRESSES.GHOSTHOP_ADAPTER_SEPOLIA) throw new Error("GhostHop Adapter address not configured in .env");
+      const { transaction: serializedTx } = await getAcrossSolanaDepositTx({
+        originChainId: CHAIN_IDS.SOLANA_MAINNET,
+        destinationChainId: CHAIN_IDS.ETHEREUM_SEPOLIA,
+        inputToken: ADDRESSES.USDC.SOLANA_MAINNET,
+        outputToken: ADDRESSES.USDC.ETHEREUM_SEPOLIA,
+        amount: quote.inputAmount,
+        recipient: ADDRESSES.GHOSTHOP_ADAPTER_SEPOLIA,
+        message: message,
+        relayerFeePct: quote.relayerFeePct,
+        quoteTimestamp: quote.quoteTimestamp,
+        depositor: solanaAddress.toBase58(),
+      });
 
-        const { transaction: serializedTx } = await getAcrossSolanaDepositTx({
-          originChainId: CHAIN_IDS.SOLANA_MAINNET,
-          destinationChainId: CHAIN_IDS.ETHEREUM_SEPOLIA,
-          inputToken: ADDRESSES.USDC.SOLANA_MAINNET,
-          outputToken: ADDRESSES.USDC.ETHEREUM_SEPOLIA,
-          amount: quote.inputAmount,
-          recipient: ADDRESSES.GHOSTHOP_ADAPTER_SEPOLIA,
-          message: message,
-          relayerFeePct: quote.relayerFeePct,
-          quoteTimestamp: quote.quoteTimestamp,
-          depositor: solanaAddress.toBase58(),
-        });
-
-        const transaction = VersionedTransaction.deserialize(toByteArray(serializedTx));
-        const signedTx = await signTransaction(transaction);
-        const signature = await connection.sendRawTransaction(signedTx.serialize());
-        await connection.confirmTransaction(signature);
-        
-        console.log("Solana Bridge initiated:", signature);
-        alert("Solana Bridge Transaction Sent!");
-      } else {
-        if (!evmAddress) throw new Error("EVM wallet not connected");
-        if (!ADDRESSES.GHOSTHOP_ADAPTER_SEPOLIA) throw new Error("GhostHop Adapter address not configured in .env");
-        
-        const isEth = quote.inputToken === ADDRESSES.NATIVE_ETH;
-
-        const tx = await writeContractAsync({
-          address: ADDRESSES.ACROSS_SPOKE_POOL_SEPOLIA,
-          abi: ACROSS_SPOKE_POOL_ABI,
-          functionName: 'depositV3',
-          args: [
-            evmAddress as `0x${string}`,
-            ADDRESSES.GHOSTHOP_ADAPTER_SEPOLIA as `0x${string}`,
-            quote.inputToken as `0x${string}`,
-            quote.outputToken as `0x${string}`,
-            BigInt(quote.inputAmount),
-            BigInt(quote.outputAmount),
-            BigInt(quote.destinationChainId),
-            quote.exclusiveRelayer,
-            quote.quoteTimestamp,
-            quote.fillDeadline,
-            quote.exclusivityDeadline,
-            message,
-          ],
-          value: isEth ? BigInt(quote.inputAmount) : BigInt(0),
-        });
-
-        console.log("EVM Bridge initiated:", tx);
-        alert("EVM Bridge Transaction Sent!");
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Unknown error during bridge');
+      const transaction = VersionedTransaction.deserialize(toByteArray(serializedTx));
+      const signedTx = await signTransaction(transaction);
+      const signature = await connection.sendRawTransaction(signedTx.serialize());
+      await connection.confirmTransaction(signature);
+      
+      console.log("Solana Bridge initiated:", signature);
+      alert("Solana Bridge Transaction Sent!");
+    } catch (e: any) {
+      setError(e.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleBridgeEvm = async () => {
+    if (!quote || !targetL2Address || !evmAddress) return;
+    setLoading(true);
+    try {
+      const message = encodeGhostHopMessage(targetL2Address);
+      if (!ADDRESSES.GHOSTHOP_ADAPTER_SEPOLIA) throw new Error("GhostHop Adapter address not configured in .env");
+      
+      const isEth = quote.inputToken === ADDRESSES.NATIVE_ETH;
+
+      const tx = await writeContractAsync({
+        address: ADDRESSES.ACROSS_SPOKE_POOL_SEPOLIA,
+        abi: ACROSS_SPOKE_POOL_ABI,
+        functionName: 'depositV3',
+        args: [
+          evmAddress as `0x${string}`,
+          ADDRESSES.GHOSTHOP_ADAPTER_SEPOLIA as `0x${string}`,
+          quote.inputToken as `0x${string}`,
+          quote.outputToken as `0x${string}`,
+          BigInt(quote.inputAmount),
+          BigInt(quote.outputAmount),
+          BigInt(quote.destinationChainId),
+          quote.exclusiveRelayer,
+          quote.quoteTimestamp,
+          quote.fillDeadline,
+          quote.exclusivityDeadline,
+          message,
+        ],
+        value: isEth ? BigInt(quote.inputAmount) : BigInt(0),
+      });
+
+      console.log("EVM Bridge initiated:", tx);
+      alert("EVM Bridge Transaction Sent!");
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getButtonText = () => {
+    if (loading) return "Processing...";
+    if (!quote) return "Enter Amount";
+    if (isPaused) return "Bridge Paused";
+    if (isWhitelisted === false) return "Token Not Whitelisted";
+    
+    if (isSolanaSource) {
+      return isSolanaConnected ? "Bridge to TEN" : "Connect Solana Wallet";
+    } else {
+      if (!isEvmConnected) return "Connect Wallet";
+      if (currentChainId !== sourceChainId) return "Switch Network";
+      return "Bridge to TEN";
     }
   };
 
@@ -205,10 +256,19 @@ export default function BridgeUI() {
       </div>
 
       <div className="space-y-4">
-        <div className="p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
-          Source: {isSolanaSource ? 'Solana Mainnet' : (chainId === CHAIN_IDS.BASE_SEPOLIA ? 'Base Sepolia' : 'Other EVM Chain')}
+        {/* Network Selector */}
+        <div className="flex gap-2 mb-2">
+          <select 
+            value={sourceChainId}
+            onChange={(e) => setSourceChainId(Number(e.target.value))}
+            className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value={CHAIN_IDS.BASE_SEPOLIA}>Base Sepolia</option>
+            <option value={CHAIN_IDS.SOLANA_MAINNET}>Solana Mainnet</option>
+          </select>
         </div>
 
+        {/* Token Selector */}
         <div className="flex gap-2 p-1 bg-gray-100 rounded-lg">
           <button
             onClick={() => setToken('USDC')}
@@ -219,7 +279,7 @@ export default function BridgeUI() {
           <button
             onClick={() => setToken('ETH')}
             disabled={isSolanaSource}
-            className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${token === 'ETH' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'} disabled:opacity-50`}
+            className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${token === 'ETH' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'} disabled:opacity-50 disabled:cursor-not-allowed`}
           >
             ETH
           </button>
@@ -262,13 +322,13 @@ export default function BridgeUI() {
 
         {isPaused && (
           <div className="p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
-            <AlertCircle size={16} /> Ten Bridge is currently paused.
+            <AlertCircle size={16} /> Ten Bridge is paused.
           </div>
         )}
 
         {isWhitelisted === false && (
           <div className="p-3 bg-yellow-50 text-yellow-700 rounded-lg text-sm flex items-center gap-2">
-            <AlertCircle size={16} /> {token} is not yet whitelisted on TEN Bridge.
+            <AlertCircle size={16} /> Token not whitelisted.
           </div>
         )}
 
@@ -284,12 +344,16 @@ export default function BridgeUI() {
         </div>
 
         <button
-          onClick={handleBridge}
+          onClick={handleAction}
           disabled={loading || !quote || !targetL2Address || isPaused || isWhitelisted === false}
-          className="w-full py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
+          className={`w-full py-4 font-bold rounded-lg transition-colors flex items-center justify-center gap-2
+            ${(currentChainId !== sourceChainId && !isSolanaSource && isEvmConnected) 
+              ? 'bg-amber-500 hover:bg-amber-600 text-white' 
+              : 'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-gray-300'}
+          `}
         >
           {loading ? <Loader2 className="animate-spin" /> : <ArrowRightLeft size={20} />}
-          Bridge to TEN
+          {getButtonText()}
         </button>
       </div>
     </div>
