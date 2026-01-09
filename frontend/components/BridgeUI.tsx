@@ -8,13 +8,9 @@ import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { VersionedTransaction } from '@solana/web3.js';
 import { toByteArray } from 'base64-js';
 import { parseUnits, formatUnits } from 'viem';
-import { 
-  getAcrossQuote, 
-  encodeGhostHopMessage,
-  getAcrossSolanaDepositTx 
-} from '../lib/across';
+import { getAcrossQuote, encodeGhostHopMessage, getAcrossSolanaDepositTx } from '../lib/across';
 import { ADDRESSES, CHAIN_IDS } from '../constants/addresses';
-import { TEN_BRIDGE_ABI, ACROSS_SPOKE_POOL_ABI, ERC20_TOKEN_ROLE, NATIVE_TOKEN_ROLE } from '../constants/abis';
+import { TEN_BRIDGE_ABI, ACROSS_SPOKE_POOL_ABI, ERC20_TOKEN_ROLE, NATIVE_TOKEN_ROLE, ERC20_ABI } from '../constants/abis';
 import { Loader2, ArrowRightLeft, AlertCircle } from 'lucide-react';
 
 interface AcrossQuote {
@@ -44,6 +40,28 @@ export default function BridgeUI() {
   const [error, setError] = useState<string | null>(null);
 
   const isSolanaSource = isSolanaConnected && !!solanaAddress;
+
+  // Determine current input token address based on source and selection
+  const inputTokenAddress = isSolanaSource 
+    ? ADDRESSES.USDC.SOLANA_MAINNET 
+    : (token === 'USDC' 
+        ? (chainId === CHAIN_IDS.BASE_SEPOLIA ? ADDRESSES.USDC.BASE_SEPOLIA : ADDRESSES.USDC.ETHEREUM_SEPOLIA)
+        : ADDRESSES.NATIVE_ETH);
+
+  // Dynamic Decimals Fetching (EVM only)
+  const { data: fetchedDecimals } = useReadContract({
+    address: inputTokenAddress as `0x${string}`,
+    abi: ERC20_ABI,
+    functionName: 'decimals',
+    chainId: chainId,
+    query: {
+      enabled: !isSolanaSource && inputTokenAddress !== ADDRESSES.NATIVE_ETH && !!inputTokenAddress,
+    }
+  });
+
+  const tokenDecimals = isSolanaSource 
+    ? 6 // Solana USDC is always 6
+    : (inputTokenAddress === ADDRESSES.NATIVE_ETH ? 18 : (fetchedDecimals ? Number(fetchedDecimals) : 18));
 
   // Pre-flight checks: Whitelist and Paused
   const destTokenAddress = token === 'USDC' ? ADDRESSES.USDC.ETHEREUM_SEPOLIA : ADDRESSES.NATIVE_ETH;
@@ -76,29 +94,15 @@ export default function BridgeUI() {
     setError(null);
     try {
       const originChainId = isSolanaSource ? CHAIN_IDS.SOLANA_MAINNET : chainId;
-      let inputToken = '';
-      let outputToken = '';
-      let decimals = 18;
-
-      if (token === 'USDC') {
-        inputToken = isSolanaSource 
-          ? ADDRESSES.USDC.SOLANA_MAINNET 
-          : (chainId === CHAIN_IDS.BASE_SEPOLIA ? ADDRESSES.USDC.BASE_SEPOLIA : ADDRESSES.USDC.ETHEREUM_SEPOLIA);
-        outputToken = ADDRESSES.USDC.ETHEREUM_SEPOLIA;
-        decimals = 6;
-      } else {
-        if (isSolanaSource) throw new Error("ETH bridge not supported from Solana in this version");
-        inputToken = ADDRESSES.NATIVE_ETH;
-        outputToken = ADDRESSES.NATIVE_ETH;
-        decimals = 18;
-      }
+      const inputToken = inputTokenAddress;
+      const outputToken = token === 'USDC' ? ADDRESSES.USDC.ETHEREUM_SEPOLIA : ADDRESSES.NATIVE_ETH;
 
       const q = await getAcrossQuote({
         originChainId,
         destinationChainId: CHAIN_IDS.ETHEREUM_SEPOLIA,
         inputToken,
         outputToken,
-        amount: parseUnits(amount, decimals).toString(),
+        amount: parseUnits(amount, tokenDecimals).toString(),
       });
       setQuote(q);
     } catch (e: unknown) {
