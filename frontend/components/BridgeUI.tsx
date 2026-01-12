@@ -11,7 +11,7 @@ import { parseUnits, formatUnits } from 'viem';
 import { getAcrossQuote, encodeGhostHopMessage, getAcrossSolanaDepositTx } from '../lib/across';
 import { ADDRESSES, CHAIN_IDS } from '../constants/addresses';
 import { TEN_BRIDGE_ABI, ACROSS_SPOKE_POOL_ABI, ERC20_TOKEN_ROLE, NATIVE_TOKEN_ROLE, ERC20_ABI } from '../constants/abis';
-import { Loader2, ArrowRightLeft, AlertCircle } from 'lucide-react';
+import { Loader2, ArrowRightLeft, AlertCircle, X, Wallet } from 'lucide-react';
 
 interface AcrossQuote {
   inputToken: { address: string; symbol: string; decimals: number; chainId: number };
@@ -39,6 +39,20 @@ export default function BridgeUI() {
   const { openConnectModal } = useConnectModal();
   const { setVisible: setSolanaModalVisible } = useWalletModal();
   const publicClient = usePublicClient();
+
+  // 0. NEW: State for your Custom Selector Modal
+  const [isSelectorOpen, setIsSelectorOpen] = useState(false);
+
+  // NEW: Handle closing the selector and opening the specific library modal
+  const openEvmModal = () => {
+    setIsSelectorOpen(false);
+    openConnectModal?.();
+  };
+
+  const openSolanaModal = () => {
+    setIsSelectorOpen(false);
+    setSolanaModalVisible(true);
+  };
 
   // 1. STATE: Source & Destination Selection
   const [sourceChainId, setSourceChainId] = useState<number>(CHAIN_IDS.BASE_SEPOLIA);
@@ -223,7 +237,7 @@ export default function BridgeUI() {
 
     if (isSolanaSource) {
       if (!isSolanaConnected) {
-        setSolanaModalVisible(true);
+        setIsSelectorOpen(true);
         return;
       }
       handleBridgeSolana();
@@ -231,7 +245,7 @@ export default function BridgeUI() {
     }
 
     if (!isEvmConnected) {
-      openConnectModal?.();
+      setIsSelectorOpen(true);
       return;
     }
     
@@ -355,15 +369,84 @@ export default function BridgeUI() {
   };
 
   return (
-    <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-xl shadow-lg border border-gray-100">
+    <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-xl shadow-lg border border-gray-100 relative">
+      
+      {/* --- START: CUSTOM WALLET SELECTOR MODAL --- */}
+      {isSelectorOpen && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/90 backdrop-blur-sm rounded-xl">
+          <div className="bg-white p-6 rounded-2xl shadow-2xl border border-gray-100 w-full max-w-[90%] relative animation-fade-in-up">
+            
+            <button 
+              onClick={() => setIsSelectorOpen(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
+            >
+              <X size={20} />
+            </button>
+
+            <h3 className="text-xl font-bold text-gray-800 mb-6 text-center">Connect Wallet</h3>
+            
+            <div className="space-y-3">
+              <button 
+                onClick={openEvmModal}
+                className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-blue-50 border border-gray-200 hover:border-blue-200 rounded-xl transition-all group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
+                    <img src="https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/eth.png" alt="ETH" className="w-6 h-6" />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-bold text-gray-800">EVM Chains</div>
+                    <div className="text-xs text-gray-500">MetaMask, Rainbow, etc</div>
+                  </div>
+                </div>
+              </button>
+
+              <button 
+                onClick={openSolanaModal}
+                className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-purple-50 border border-gray-200 hover:border-purple-200 rounded-xl transition-all group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center text-purple-600">
+                    <img src="https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" alt="SOL" className="w-6 h-6" />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-bold text-gray-800">Solana</div>
+                    <div className="text-xs text-gray-500">Phantom, Backpack, etc</div>
+                  </div>
+                </div>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+      {/* --- END: CUSTOM WALLET SELECTOR MODAL --- */}
+
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
           👻 GhostHop
         </h1>
-        <div className="flex flex-col gap-2 items-end">
-          <ConnectButton showBalance={false} chainStatus="none" />
-          <WalletMultiButton className="!bg-purple-600 !h-8 !text-xs !py-0 !px-4" />
+        
+        {/* --- START: UPDATED HEADER BUTTON --- */}
+        <div>
+          {/* CASE 1: EVM Connected */}
+          {isEvmConnected ? (
+             <ConnectButton showBalance={false} chainStatus="icon" accountStatus="avatar" />
+          ) : isSolanaConnected ? (
+             /* CASE 2: Solana Connected */
+             <WalletMultiButton className="!bg-purple-600 !h-10 !text-sm !font-bold !rounded-xl" />
+          ) : (
+             /* CASE 3: Not Connected -> Show Master Button */
+             <button
+                onClick={() => setIsSelectorOpen(true)}
+                className="bg-black text-white px-4 py-2 rounded-xl font-bold text-sm hover:bg-gray-800 transition-colors flex items-center gap-2"
+             >
+                <Wallet size={16} />
+                Connect
+             </button>
+          )}
         </div>
+        {/* --- END: UPDATED HEADER BUTTON --- */}
       </div>
 
       <div className="space-y-2">
@@ -536,11 +619,6 @@ export default function BridgeUI() {
             {error}
           </div>
         )}
-
-        <div className="flex justify-center pt-2">
-          <WalletMultiButton className="!bg-purple-600 !h-10 !text-sm" />
-          <span className="ml-2 text-xs text-gray-400 self-center">(Mainnet Only)</span>
-        </div>
 
         <button
           onClick={handleAction}
