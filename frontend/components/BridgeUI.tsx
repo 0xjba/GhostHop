@@ -11,7 +11,9 @@ import { parseUnits, formatUnits } from 'viem';
 import { getAcrossQuote, encodeGhostHopMessage, getAcrossSolanaDepositTx } from '../lib/across';
 import { ADDRESSES, CHAIN_IDS } from '../constants/addresses';
 import { TEN_BRIDGE_ABI, ACROSS_SPOKE_POOL_ABI, ERC20_TOKEN_ROLE, NATIVE_TOKEN_ROLE, ERC20_ABI } from '../constants/abis';
-import { Loader2, ArrowRightLeft, AlertCircle, X, Wallet } from 'lucide-react';
+import { Loader2, ArrowRightLeft, AlertCircle, X, Wallet, RefreshCw, Settings, ArrowRight, ChevronDown, Check } from 'lucide-react';
+
+// ... rest of imports ...
 
 interface AcrossQuote {
   inputToken: { address: string; symbol: string; decimals: number; chainId: number };
@@ -39,6 +41,21 @@ export default function BridgeUI() {
   const { openConnectModal } = useConnectModal();
   const { setVisible: setSolanaModalVisible } = useWalletModal();
   const publicClient = usePublicClient();
+
+  // Helper to extract clean error code from Across API JSON errors
+  const extractAcrossError = (e: unknown): string => {
+    if (!(e instanceof Error)) return 'Unknown error';
+    if (e.message.includes('Across API Error:') || e.message.includes('Across Solana API Error:')) {
+      try {
+        const jsonStr = e.message.split('Error: ')[1];
+        const errorObj = JSON.parse(jsonStr);
+        return errorObj.code || e.message;
+      } catch {
+        return e.message;
+      }
+    }
+    return e.message;
+  };
 
   // 0. NEW: State for your Custom Selector Modal
   const [isSelectorOpen, setIsSelectorOpen] = useState(false);
@@ -178,7 +195,7 @@ export default function BridgeUI() {
       // Manually add inputAmount to the quote object for easier handling
       setQuote({ ...q, inputAmount: inputAmountRaw });
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Unknown error fetching quote');
+      setError(extractAcrossError(e));
       setQuote(null);
     } finally {
       setLoading(false);
@@ -240,6 +257,10 @@ export default function BridgeUI() {
         setIsSelectorOpen(true);
         return;
       }
+      if (!targetL2Address) {
+        setError("Please enter a recipient TEN address.");
+        return;
+      }
       handleBridgeSolana();
       return;
     }
@@ -262,6 +283,11 @@ export default function BridgeUI() {
 
     if (needsApproval) {
       await handleApprove();
+      return;
+    }
+
+    if (!targetL2Address) {
+      setError("Please enter a recipient TEN address.");
       return;
     }
 
@@ -296,7 +322,7 @@ export default function BridgeUI() {
       console.log("Solana Bridge initiated:", signature);
       alert("Solana Bridge Transaction Sent!");
     } catch (e: any) {
-      setError(e.message);
+      setError(extractAcrossError(e));
     } finally {
       setLoading(false);
     }
@@ -343,7 +369,7 @@ export default function BridgeUI() {
       await publicClient.waitForTransactionReceipt({ hash });
       alert("EVM Bridge Transaction Confirmed!");
     } catch (e: any) {
-      setError(e.message);
+      setError(extractAcrossError(e));
     } finally {
       setLoading(false);
     }
@@ -353,286 +379,376 @@ export default function BridgeUI() {
     if (loading) return "Processing...";
     if (isPaused) return "Bridge Paused";
     
-    if (isSolanaSource) {
-      if (!isSolanaConnected) return "Connect Solana Wallet";
-    } else {
-      if (!isEvmConnected) return "Connect Wallet";
-      if (currentChainId !== sourceChainId) return "Switch Network";
-    }
+    if (needsConnect) return "Enter Amount";
+    
+    if (!isSolanaSource && currentChainId !== sourceChainId) return "Switch Network";
     
     if (!quote) return "Enter Amount";
-    // if (isWhitelisted === false) return "Token Not Whitelisted";
+
+    if (!targetL2Address) return "Enter Recipient";
     
     if (needsApproval) return `Approve ${token}`;
 
-    return "Bridge to TEN";
+    return "Bridge Now";
   };
 
   return (
-    <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-xl shadow-lg border border-gray-100 relative">
+    <div className="min-h-screen bg-background text-text-primary p-4 md:p-12 font-sans overflow-x-hidden">
       
-      {/* --- START: CUSTOM WALLET SELECTOR MODAL --- */}
-      {isSelectorOpen && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/90 backdrop-blur-sm rounded-xl">
-          <div className="bg-white p-6 rounded-2xl shadow-2xl border border-gray-100 w-full max-w-[90%] relative animation-fade-in-up">
-            
-            <button 
-              onClick={() => setIsSelectorOpen(false)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
-            >
-              <X size={20} />
-            </button>
-
-            <h3 className="text-xl font-bold text-gray-800 mb-6 text-center">Connect Wallet</h3>
-            
-            <div className="space-y-3">
-              <button 
-                onClick={openEvmModal}
-                className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-blue-50 border border-gray-200 hover:border-blue-200 rounded-xl transition-all group"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
-                    <img src="https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/eth.png" alt="ETH" className="w-6 h-6" />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-bold text-gray-800">EVM Chains</div>
-                    <div className="text-xs text-gray-500">MetaMask, Rainbow, etc</div>
-                  </div>
-                </div>
-              </button>
-
-              <button 
-                onClick={openSolanaModal}
-                className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-purple-50 border border-gray-200 hover:border-purple-200 rounded-xl transition-all group"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center text-purple-600">
-                    <img src="https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" alt="SOL" className="w-6 h-6" />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-bold text-gray-800">Solana</div>
-                    <div className="text-xs text-gray-500">Phantom, Backpack, etc</div>
-                  </div>
-                </div>
-              </button>
+      {/* 1. Step Indicator */}
+      <div className="flex justify-center items-center gap-4 mb-12">
+        {[1, 2, 3, 4].map((step) => (
+          <div key={step} className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all
+              ${step === 1 ? 'bg-primary text-background shadow-[0_0_20px_rgba(245,249,106,0.4)]' : 'bg-surface-elevated text-text-secondary border border-border'}
+            `}>
+              {step}
             </div>
-
+            {step < 4 && <div className="w-12 h-[1px] bg-border hidden sm:block"></div>}
           </div>
-        </div>
-      )}
-      {/* --- END: CUSTOM WALLET SELECTOR MODAL --- */}
-
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-          👻 GhostHop
-        </h1>
-        
-        {/* --- START: UPDATED HEADER BUTTON --- */}
-        <div>
-          {/* CASE 1: EVM Connected */}
-          {isEvmConnected ? (
-             <ConnectButton showBalance={false} chainStatus="icon" accountStatus="avatar" />
-          ) : isSolanaConnected ? (
-             /* CASE 2: Solana Connected */
-             <WalletMultiButton className="!bg-purple-600 !h-10 !text-sm !font-bold !rounded-xl" />
-          ) : (
-             /* CASE 3: Not Connected -> Show Master Button */
-             <button
-                onClick={() => setIsSelectorOpen(true)}
-                className="bg-black text-white px-4 py-2 rounded-xl font-bold text-sm hover:bg-gray-800 transition-colors flex items-center gap-2"
-             >
-                <Wallet size={16} />
-                Connect
-             </button>
-          )}
-        </div>
-        {/* --- END: UPDATED HEADER BUTTON --- */}
+        ))}
       </div>
 
-      <div className="space-y-2">
-        {/* FROM BLOCK */}
-        <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
-          <div className="flex justify-between items-center mb-2">
-            <label className="text-sm font-semibold text-gray-500">From</label>
-            <span className="text-xs text-gray-400">Balance: 0</span>
-          </div>
-          <div className="flex gap-4 items-center">
-            <input
-              type="number"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="flex-1 bg-transparent text-2xl font-bold outline-none placeholder-gray-300"
-              placeholder="0.00"
-            />
-            <div className="flex flex-col gap-1 min-w-[140px]">
-              <select 
-                value={token}
-                onChange={(e) => {
-                  const val = e.target.value as 'USDC' | 'ETH';
-                  setToken(val);
-                  setDestToken(val); // Keep in sync for GhostHop
-                }}
-                className="p-1 bg-white border border-gray-200 rounded-lg text-sm font-bold text-gray-700 outline-none"
+      {/* 2. Main Bridge Card */}
+      <div className="max-w-[760px] mx-auto glass-card p-6 md:p-10 relative overflow-hidden">
+        
+        {/* Abstract Background Glow */}
+        <div className="absolute -top-24 -right-24 w-64 h-64 bg-primary/5 rounded-full blur-[80px]"></div>
+        <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-secondary/5 rounded-full blur-[80px]"></div>
+
+        {/* --- START: CUSTOM WALLET SELECTOR MODAL --- */}
+        {isSelectorOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 backdrop-blur-md p-4">
+            <div className="glass-card p-8 w-full max-w-md relative animate-in fade-in zoom-in duration-200">
+              <button 
+                onClick={() => setIsSelectorOpen(false)}
+                className="absolute top-6 right-6 text-text-secondary hover:text-text-primary transition-colors"
               >
-                <option value="USDC">USDC</option>
-                <option value="ETH" disabled={isSolanaSource}>ETH</option>
-              </select>
-              <select 
-                value={sourceChainId}
-                onChange={(e) => setSourceChainId(Number(e.target.value))}
-                className="p-1 bg-white border border-gray-200 rounded-lg text-xs text-gray-500 outline-none"
-              >
-                <option value={CHAIN_IDS.BASE_SEPOLIA}>Base Sepolia</option>
-                <option value={CHAIN_IDS.ARBITRUM_SEPOLIA}>Arbitrum Sepolia</option>
-                <option value={CHAIN_IDS.SOLANA_DEVNET}>Solana Devnet</option>
-              </select>
+                <X size={20} />
+              </button>
+
+              <h3 className="text-2xl font-bold mb-8 text-center">Connect Wallet</h3>
+              
+              <div className="space-y-4">
+                <button 
+                  onClick={openEvmModal}
+                  className="w-full flex items-center justify-between p-5 glass-panel hover:bg-surface-elevated transition-all group border-border/50"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-blue-500/10 rounded-full flex items-center justify-center">
+                      <img src="https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/eth.png" alt="ETH" className="w-7 h-7" />
+                    </div>
+                    <div className="text-left">
+                      <div className="font-bold text-lg">EVM Chains</div>
+                      <div className="text-sm text-text-secondary">MetaMask, Rainbow, etc</div>
+                    </div>
+                  </div>
+                </button>
+
+                <button 
+                  onClick={openSolanaModal}
+                  className="w-full flex items-center justify-between p-5 glass-panel hover:bg-surface-elevated transition-all group border-border/50"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-purple-500/10 rounded-full flex items-center justify-center">
+                      <img src="https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" alt="SOL" className="w-7 h-7" />
+                    </div>
+                    <div className="text-left">
+                      <div className="font-bold text-lg">Solana</div>
+                      <div className="text-sm text-text-secondary">Phantom, Backpack, etc</div>
+                    </div>
+                  </div>
+                </button>
+              </div>
             </div>
           </div>
-          <div className="text-xs text-gray-400 mt-1">$0.00</div>
-        </div>
+        )}
+        {/* --- END: CUSTOM WALLET SELECTOR MODAL --- */}
 
-        {/* SWAP ICON */}
-        <div className="flex justify-center -my-3 relative z-10">
-          <div className="bg-white p-2 rounded-xl border border-gray-100 shadow-sm text-gray-400">
-            <ArrowRightLeft size={16} />
+        {/* Card Header */}
+        <div className="flex items-center justify-between mb-10">
+          <div className="flex items-baseline gap-3">
+            <h1 className="text-3xl font-bold tracking-tight text-white">Bridge</h1>
+          </div>
+          
+          <div className="flex items-center gap-3 relative z-20">
+            <button className="p-2.5 rounded-full glass-panel hover:text-primary transition-colors text-text-secondary bg-surface-elevated/50">
+              <RefreshCw size={20} />
+            </button>
+            <button className="p-2.5 rounded-full glass-panel hover:text-primary transition-colors text-text-secondary bg-surface-elevated/50">
+              <Settings size={20} />
+            </button>
+            {/* Connect Wallet Button */}
+            <button 
+              onClick={() => setIsSelectorOpen(true)}
+              className="px-5 py-2.5 rounded-full glass-panel hover:text-primary transition-colors text-text-secondary bg-surface-elevated/50 font-bold text-sm flex items-center gap-2 cursor-pointer"
+            >
+              <Wallet size={16} className="pointer-events-none" />
+              <span className="pointer-events-none">
+                {needsConnect ? (isSolanaSource ? "Connect Solana" : "Connect Wallet") : (isSolanaSource ? `${solanaAddress?.toBase58().slice(0,6)}...${solanaAddress?.toBase58().slice(-4)}` : `${evmAddress?.slice(0,6)}...${evmAddress?.slice(-4)}`)}
+              </span>
+            </button>
           </div>
         </div>
 
-        {/* TO BLOCK */}
-        <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
-          <div className="flex justify-between items-center mb-2">
-            <label className="text-sm font-semibold text-gray-500">To</label>
-            <span className="text-xs text-gray-400">TEN Network</span>
+        {/* Bridge Form */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative">
+          
+          {/* Swap-direction button centered */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 hidden md:block">
+            <button className="w-12 h-12 rounded-full glass-card border-border bg-surface flex items-center justify-center text-text-secondary hover:text-primary hover:rotate-180 transition-all duration-500 shadow-xl">
+              <ArrowRightLeft size={20} />
+            </button>
           </div>
-          <div className="flex gap-4 items-center">
-            <div className="flex-1 text-2xl font-bold text-gray-400">
-              {quote ? formatUnits(BigInt(quote.outputAmount), destToken === 'USDC' ? 6 : 18) : '0.00'}
+
+          {/* From Panel */}
+          <div className="glass-panel p-6 flex flex-col gap-6">
+            <div className="flex justify-between items-center text-[10px] text-text-secondary font-bold uppercase tracking-widest opacity-70">
+              <span>From</span>
+              <div className="flex items-center gap-1.5 text-text-primary truncate max-w-[150px]">
+                <div className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse"></div>
+                {isEvmConnected ? `${evmAddress?.slice(0,6)}...${evmAddress?.slice(-4)}` : (isSolanaConnected ? `${solanaAddress?.toBase58().slice(0,6)}...${solanaAddress?.toBase58().slice(-4)}` : 'Disconnected')}
+              </div>
             </div>
-            <div className="flex flex-col gap-1 min-w-[140px]">
-              <select 
-                value={destToken}
-                onChange={(e) => setDestToken(e.target.value as 'USDC' | 'ETH')}
-                className="p-1 bg-white border border-gray-200 rounded-lg text-sm font-bold text-gray-700 outline-none"
-              >
-                <option value="USDC">USDC</option>
-                <option value="ETH">ETH</option>
-              </select>
-              <select 
-                disabled
-                className="p-1 bg-gray-100 border border-gray-200 rounded-lg text-xs text-gray-500 outline-none cursor-not-allowed"
-              >
-                <option>TEN (Sepolia)</option>
-              </select>
+
+            <div className="flex items-center gap-4">
+              <div className="flex flex-col gap-1.5 flex-1">
+                <span className="text-[10px] text-text-secondary font-bold uppercase tracking-widest opacity-70">Token</span>
+                <div className="flex items-center gap-2 cursor-pointer group relative">
+                  <div className="w-7 h-7 rounded-full bg-surface-elevated/50 flex items-center justify-center p-1.5 transition-all">
+                    <img 
+                      src={token === 'ETH' ? "https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/eth.png" : "https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/usdc.png"} 
+                      alt={token} 
+                      className="w-full h-full" 
+                    />
+                  </div>
+                  <div className="relative flex items-center">
+                    <select 
+                      value={token}
+                      onChange={(e) => {
+                        const val = e.target.value as 'USDC' | 'ETH';
+                        setToken(val);
+                        setDestToken(val);
+                      }}
+                      className="bg-transparent text-lg font-bold outline-none appearance-none pr-6 cursor-pointer"
+                    >
+                      <option value="USDC">USDC</option>
+                      <option value="ETH" disabled={isSolanaSource}>ETH</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-0 text-text-secondary pointer-events-none" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="text-text-secondary/20 text-xl font-light self-end pb-1.5">/</div>
+
+              <div className="flex flex-col gap-1.5 flex-1">
+                <span className="text-[10px] text-text-secondary font-bold uppercase tracking-widest opacity-70">Network</span>
+                <div className="flex items-center gap-2 cursor-pointer group relative">
+                   <div className="w-7 h-7 rounded-full bg-surface-elevated/50 flex items-center justify-center p-1.5 transition-all">
+                    <img 
+                      src={sourceChainId === CHAIN_IDS.SOLANA_DEVNET ? "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" : "https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/eth.png"} 
+                      alt="network" 
+                      className="w-full h-full" 
+                    />
+                  </div>
+                  <div className="relative flex items-center">
+                    <select 
+                      value={sourceChainId}
+                      onChange={(e) => setSourceChainId(Number(e.target.value))}
+                      className="bg-transparent text-lg font-bold outline-none appearance-none pr-6 cursor-pointer"
+                    >
+                      <option value={CHAIN_IDS.BASE_SEPOLIA}>Base</option>
+                      <option value={CHAIN_IDS.ARBITRUM_SEPOLIA}>Arbitrum</option>
+                      <option value={CHAIN_IDS.SOLANA_DEVNET}>Solana</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-0 text-text-secondary pointer-events-none" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-text-secondary uppercase tracking-widest opacity-70">You send</label>
+              <div className="flex items-center gap-4">
+                <input
+                  type="number"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="flex-1 bg-transparent text-4xl md:text-5xl font-bold outline-none placeholder:text-text-secondary/20"
+                  placeholder="0.00"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-text-secondary">~${amount ? (Number(amount) * (token === 'ETH' ? 2500 : 1)).toFixed(2) : '0.00'}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-text-secondary">Balance: 0.00</span>
+                <button className="text-primary font-bold hover:brightness-110">MAX</button>
+              </div>
             </div>
           </div>
-          <div className="text-xs text-gray-400 mt-1">$0.00</div>
+
+          {/* To Panel */}
+          <div className="glass-panel p-6 flex flex-col gap-6">
+            <div className="flex justify-between items-center text-[10px] text-text-secondary font-bold uppercase tracking-widest opacity-70">
+              <span>To</span>
+              <div className="flex items-center gap-2 text-text-primary bg-background/50 px-3 py-1.5 rounded-lg transition-all flex-1 ml-4 max-w-[240px]">
+                <div className="w-1.5 h-1.5 rounded-full bg-secondary shrink-0"></div>
+                <input
+                  type="text"
+                  value={targetL2Address}
+                  onChange={(e) => setTargetL2Address(e.target.value)}
+                  className="bg-transparent outline-none font-mono text-[10px] w-full placeholder:text-text-secondary/50"
+                  placeholder="Recipient TEN Address (0x...)"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="flex flex-col gap-1.5 flex-1">
+                <span className="text-[10px] text-text-secondary font-bold uppercase tracking-widest opacity-70">Token</span>
+                <div className="flex items-center gap-2 opacity-80 group relative">
+                  <div className="w-7 h-7 rounded-full bg-surface-elevated/50 flex items-center justify-center p-1.5 transition-all">
+                    <img 
+                      src={destToken === 'ETH' ? "https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/eth.png" : "https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/usdc.png"} 
+                      alt={destToken} 
+                      className="w-full h-full" 
+                    />
+                  </div>
+                  <span className="text-lg font-bold">{destToken}</span>
+                </div>
+              </div>
+
+              <div className="text-text-secondary/20 text-xl font-light self-end pb-1.5">/</div>
+
+              <div className="flex flex-col gap-1.5 flex-1">
+                <span className="text-[10px] text-text-secondary font-bold uppercase tracking-widest opacity-70">Network</span>
+                <div className="flex items-center gap-2 opacity-80 group relative">
+                   <div className="w-7 h-7 rounded-full bg-surface-elevated/50 flex items-center justify-center p-1.5 transition-all">
+                    <img 
+                      src="https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/eth.png" 
+                      alt="network" 
+                      className="w-full h-full" 
+                    />
+                  </div>
+                  <span className="text-lg font-bold">TEN</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-text-secondary uppercase tracking-widest opacity-70">You receive</label>
+              <div className="flex items-center gap-4">
+                <div className={`flex-1 text-4xl md:text-5xl font-bold truncate transition-all ${quote ? 'text-text-primary' : 'text-text-secondary/20'}`}>
+                  {quote ? formatUnits(BigInt(quote.outputAmount), destToken === 'USDC' ? 6 : 18) : '0.00'}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-text-secondary">~${quote ? (Number(formatUnits(BigInt(quote.outputAmount), destToken === 'USDC' ? 6 : 18)) * (destToken === 'ETH' ? 2500 : 1)).toFixed(2) : '0.00'}</span>
+              <span className="text-text-secondary">Balance: 0.00</span>
+            </div>
+          </div>
         </div>
 
-        {/* TARGET ADDRESS */}
-        <div className="mt-4">
-          <label className="block text-xs font-semibold text-gray-500 mb-1 ml-1 uppercase">Target TEN L2 Address</label>
-          <input
-            type="text"
-            value={targetL2Address}
-            onChange={(e) => setTargetL2Address(e.target.value)}
-            className="w-full p-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono text-xs"
-            placeholder="0x..."
-          />
-        </div>
-
+        {/* Quote Details (Optional but Premium) */}
         {quote && (
-          <div className="mt-4 p-4 bg-gray-50 rounded-xl border border-gray-100 space-y-3 text-sm">
-            {/* Route */}
+          <div className="mt-6 p-5 glass-panel border-secondary/20 bg-secondary/5 space-y-3 text-sm animate-in fade-in slide-in-from-top-4 duration-500">
             <div className="flex justify-between items-center">
-              <div className="flex items-center gap-2 text-gray-500">
-                <ArrowRightLeft size={14} className="text-gray-400" />
-                <span>Route</span>
+              <div className="flex items-center gap-2 text-text-secondary">
+                <ArrowRightLeft size={14} className="text-secondary" />
+                <span>Best Route via Across V4</span>
               </div>
-              <div className="flex items-center gap-1.5 font-medium text-gray-700">
-                <div className="w-5 h-5 bg-emerald-400 rounded-full flex items-center justify-center text-[10px] text-white font-bold">
-                  ✕
-                </div>
-                <span>Across V4</span>
+              <div className="text-secondary font-bold flex items-center gap-1">
+                <Check size={14} />
+                Selected
               </div>
             </div>
+            
+            <div className="h-[1px] bg-border/50"></div>
 
-            {/* Est. Time */}
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-2 text-gray-500">
-                <span className="opacity-70">🕒</span>
-                <span>Est. Time</span>
-              </div>
-              <div className="font-medium text-gray-700">
-                ~{quote.estimatedFillTimeSec} secs
-              </div>
-            </div>
-
-            {/* Fees Section */}
-            <div className="space-y-2 pt-1">
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2 text-gray-500">
-                  <span className="opacity-70">💰</span>
-                  <span>Total Fee</span>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <span className="text-[10px] text-text-secondary uppercase font-bold">Est. Time</span>
+                <div className="font-semibold text-text-primary flex items-center gap-1.5">
+                  <RefreshCw size={12} className="animate-spin text-secondary" />
+                  ~{quote.estimatedFillTimeSec} seconds
                 </div>
-                <div className="font-bold text-gray-800">
+              </div>
+              <div className="space-y-1 text-right">
+                <span className="text-[10px] text-text-secondary uppercase font-bold">Total Fees</span>
+                <div className="font-semibold text-text-primary">
                   {formatUnits(BigInt(quote.relayFeeTotal), tokenDecimals)} {token}
                 </div>
               </div>
-
-              {/* Nested Fees */}
-              <div className="pl-6 space-y-2 border-l border-gray-200 ml-2.5">
-                <div className="flex justify-between items-center relative">
-                  <div className="absolute -left-[19px] top-1/2 w-3 border-t border-gray-200"></div>
-                  <span className="text-gray-400 text-xs">Bridge Fee</span>
-                  <span className="text-gray-600 text-xs font-medium">
-                    {formatUnits(BigInt(quote.relayerGasFee.total), tokenDecimals)} {token}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center relative">
-                  <div className="absolute -left-[19px] top-1/2 w-3 border-t border-gray-200"></div>
-                  <span className="text-gray-400 text-xs">Swap Impact</span>
-                  <span className="text-gray-600 text-xs font-medium">
-                    {formatUnits(BigInt(quote.relayerCapitalFee.total), tokenDecimals)} {token}
-                  </span>
-                </div>
-              </div>
             </div>
           </div>
         )}
 
-        {/* ... error/status messages ... */}
+        {/* Error/Status Messages */}
+        <div className="mt-6 space-y-3">
+          {isPaused && (
+            <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-sm flex items-center gap-3">
+              <AlertCircle size={18} /> 
+              <span className="font-medium">Ten Bridge is currently paused for maintenance.</span>
+            </div>
+          )}
 
-        {isPaused && (
-          <div className="p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
-            <AlertCircle size={16} /> Ten Bridge is paused.
-          </div>
-        )}
+          {error && (
+            <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-xs break-all font-mono">
+              <span className="font-bold uppercase block mb-1">Error Occurred</span>
+              {error}
+            </div>
+          )}
+        </div>
 
-        {/* {isWhitelisted === false && (
-          <div className="p-3 bg-yellow-50 text-yellow-700 rounded-lg text-sm flex items-center gap-2">
-            <AlertCircle size={16} /> Token not whitelisted.
-          </div>
-        )} */}
+        {/* CTA Row */}
+        <div className="mt-10 flex justify-end">
+          <button
+            onClick={handleAction}
+            disabled={loading || isPaused}
+            className={`
+              group relative flex items-center gap-3 px-8 py-4 rounded-full font-bold text-base transition-all overflow-hidden
+              !bg-[#F5F96A] !text-[#0B0E11] shadow-[0_4px_30px_rgba(245,249,106,0.3)]
+              disabled:opacity-50 disabled:cursor-not-allowed
+              hover:brightness-110 active:scale-[0.98]
+              relative z-10
+            `}
+          >
+            {loading ? (
+              <Loader2 className="animate-spin" size={20} />
+            ) : (
+              <>
+                {getButtonText()}
+                <ArrowRight className="group-hover:translate-x-1 transition-transform" size={20} />
+              </>
+            )}
+            
+            {/* Inner Glow Effect */}
+            <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          </button>
+        </div>
 
-        {error && (
-          <div className="p-3 bg-red-50 text-red-600 rounded-lg text-xs break-all">
-            {error}
-          </div>
-        )}
-
-        <button
-          onClick={handleAction}
-          disabled={loading || (!needsConnect && !needsSwitch && (!quote || !targetL2Address)) || isPaused /* || isWhitelisted === false */}
-          className={`w-full py-4 font-bold rounded-lg transition-colors flex items-center justify-center gap-2
-            ${needsSwitch 
-              ? 'bg-amber-500 hover:bg-amber-600 text-white' 
-              : 'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-gray-300'}
-          `}
-        >
-          {loading ? <Loader2 className="animate-spin" /> : <ArrowRightLeft size={20} />}
-          {getButtonText()}
-        </button>
       </div>
+
+      <style jsx>{`
+        select {
+          -webkit-appearance: none;
+          -moz-appearance: none;
+          appearance: none;
+          background-color: transparent;
+        }
+        select::-ms-expand {
+          display: none;
+        }
+        option {
+          background-color: #1C222B;
+          color: white;
+        }
+      `}</style>
     </div>
   );
 }
