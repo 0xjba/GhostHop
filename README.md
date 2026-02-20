@@ -74,3 +74,19 @@ npm run dev
 - `SafeERC20` is used for all token transfers.
 - `try/catch` blocks wrap all bridge interactions to ensure no funds are stuck in the adapter.
 
+
+## Watcher Bot (Outbound Flow)
+
+The watcher bot monitors for "slow path" exits (7-day challenge period) from TEN to L1.
+
+### Setup
+
+1. Configure `TEN_RPC_URL`, `L1_RPC_URL`, and `BOT_PRIVATE_KEY` in `.env`.
+2. Run the bot:
+
+```bash
+npx hardhat run scripts/bot/watcherBot.ts --network sepolia
+```
+
+### Technical Note
+The `watcherBot.ts` script uses a placeholder method `ten_getCrossChainProof` to fetch cross-chain proofs from the TEN node. You will need to replace this with the actual JSON-RPC method provided by the TEN protocol documentation once available.
